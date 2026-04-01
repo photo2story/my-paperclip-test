@@ -43,6 +43,13 @@ function commandLooksLike(command: string, expected: string): boolean {
   return base === expected || base === `${expected}.cmd` || base === `${expected}.exe`;
 }
 
+function resolveCursorInvocation(command: string, args: string[]): { command: string; args: string[] } {
+  if (commandLooksLike(command, "cursor")) {
+    return { command, args: ["agent", ...args] };
+  }
+  return { command, args };
+}
+
 function summarizeProbeDetail(stdout: string, stderr: string, parsedError: string | null): string | null {
   const raw = parsedError?.trim() || firstNonEmptyLine(stderr) || firstNonEmptyLine(stdout);
   if (!raw) return null;
@@ -94,7 +101,7 @@ export async function testEnvironment(
 ): Promise<AdapterEnvironmentTestResult> {
   const checks: AdapterEnvironmentCheck[] = [];
   const config = parseObject(ctx.config);
-  const command = asString(config.command, "agent");
+  const command = asString(config.command, "cursor");
   const cwd = asString(config.cwd, process.cwd());
 
   try {
@@ -170,13 +177,13 @@ export async function testEnvironment(
   const canRunProbe =
     checks.every((check) => check.code !== "cursor_cwd_invalid" && check.code !== "cursor_command_unresolvable");
   if (canRunProbe) {
-    if (!commandLooksLike(command, "agent")) {
+    if (!commandLooksLike(command, "agent") && !commandLooksLike(command, "cursor")) {
       checks.push({
         code: "cursor_hello_probe_skipped_custom_command",
         level: "info",
-        message: "Skipped hello probe because command is not `agent`.",
+        message: "Skipped hello probe because command is not `agent` or `cursor`.",
         detail: command,
-        hint: "Use the `agent` CLI command to run the automatic installation and auth probe.",
+        hint: "Use `cursor` (recommended) or the `agent` shim CLI command to run the automatic installation and auth probe.",
       });
     } else {
       const model = asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL).trim();
@@ -191,11 +198,12 @@ export async function testEnvironment(
       if (autoTrustEnabled) args.push("--yolo");
       if (extraArgs.length > 0) args.push(...extraArgs);
       args.push("Respond with hello.");
+      const invocation = resolveCursorInvocation(command, args);
 
       const probe = await runChildProcess(
         `cursor-envtest-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        command,
-        args,
+        invocation.command,
+        invocation.args,
         {
           cwd,
           env,

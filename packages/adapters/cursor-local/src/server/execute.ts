@@ -29,6 +29,20 @@ import { hasCursorTrustBypassArg } from "../shared/trust.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
+function commandLooksLike(command: string, expected: string): boolean {
+  const base = path.basename(command).toLowerCase();
+  return base === expected || base === `${expected}.cmd` || base === `${expected}.exe`;
+}
+
+function resolveCursorInvocation(command: string, args: string[]): { command: string; args: string[] } {
+  // Newer Cursor builds expose the agent as a subcommand: `cursor agent ...`
+  // Some environments also provide a standalone `agent` shim.
+  if (commandLooksLike(command, "cursor")) {
+    return { command, args: ["agent", ...args] };
+  }
+  return { command, args };
+}
+
 function firstNonEmptyLine(text: string): string {
   return (
     text
@@ -164,7 +178,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     config.promptTemplate,
     "You are agent {{agent.id}} ({{agent.name}}). Continue your Paperclip work.",
   );
-  const command = asString(config.command, "agent");
+  const command = asString(config.command, "cursor");
   const model = asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL).trim();
   const mode = normalizeMode(asString(config.mode, ""));
 
@@ -387,13 +401,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const runAttempt = async (resumeSessionId: string | null) => {
     const args = buildArgs(resumeSessionId);
+    const invocation = resolveCursorInvocation(command, args);
     if (onMeta) {
       await onMeta({
         adapterType: "cursor",
         command: resolvedCommand,
         cwd,
         commandNotes,
-        commandArgs: args,
+        commandArgs: invocation.args,
         env: loggedEnv,
         prompt,
         promptMetrics,
@@ -425,7 +440,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       }
     };
 
-    const proc = await runChildProcess(runId, command, args, {
+    const proc = await runChildProcess(runId, invocation.command, invocation.args, {
       cwd,
       env,
       timeoutSec,

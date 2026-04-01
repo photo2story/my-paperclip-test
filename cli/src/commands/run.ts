@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { bootstrapCeoInvite } from "./auth-bootstrap-ceo.js";
@@ -146,11 +147,28 @@ function maybeEnableUiDevMiddleware(entrypoint: string): void {
   }
 }
 
+function ensureWorkspaceBuildDeps(projectRoot: string): void {
+  const scriptPath = path.resolve(projectRoot, "scripts/ensure-plugin-build-deps.mjs");
+  if (!fs.existsSync(scriptPath)) return;
+
+  const result = spawnSync(process.execPath, [scriptPath], {
+    cwd: projectRoot,
+    stdio: "inherit",
+  });
+  if (result.error) throw result.error;
+  if (typeof result.status === "number" && result.status !== 0) {
+    process.exit(result.status);
+  }
+}
+
 async function importServerEntry(): Promise<StartedServer> {
   // Dev mode: try local workspace path (monorepo with tsx)
   const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
   const devEntry = path.resolve(projectRoot, "server/src/index.ts");
   if (fs.existsSync(devEntry)) {
+    // In workspace dev mode, some packages (like @paperclipai/plugin-sdk) rely on built dist outputs.
+    // Ensure required workspace dist artifacts exist before importing the server entrypoint.
+    ensureWorkspaceBuildDeps(projectRoot);
     maybeEnableUiDevMiddleware(devEntry);
     const mod = await import(pathToFileURL(devEntry).href);
     return await startServerFromModule(mod, devEntry);
